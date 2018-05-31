@@ -1,0 +1,415 @@
+function MASC_fmri_task(subid)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% %
+%         MASC fMRI TASK                               %
+%         by Marianne, may 2018                        %
+%         Zaki-Gruber-Wager Labs                       %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% %
+
+% Run from code folder
+
+addpath(pwd);
+
+Screen('Preference', 'SkipSyncTests', 1); % not ideal to skip this, adjust for stim PC
+
+%% paths
+% addpath(viddir);
+% addpath(bmdir);
+
+%% random number generator reset
+rand('state',sum(100*clock)); %#ok
+% %% videos for loading
+bmdata=imread('bodymap.jpg');
+% im_list=filenames(sprintf('%s/*',imagedir));
+% % image list
+% for i=1:length(im_list)
+%     [~, tag, ext] = fileparts(char(im_list(i)));
+%     images{i}=sprintf('%s%s',tag);
+% end
+% randomim=randperm(length(images));
+% for i=1:length(images)
+%     imageorder(i)=images(randomim(i));
+% end
+% imageorder=imageorder';
+
+videoorder={'ID120_vid4.mp4'}; % update
+resp_log=[];bmap={};
+
+%% sub info
+fname=sprintf('MASC_fMRItask_responses_%d',subid);
+datafilename = strcat('MASC_fMRItask_responses_',num2str(subid),'.txt'); % name of data file to write to
+% check for existing result file to prevent accidentally overwriting
+if fopen(datafilename, 'rt')~=-1
+    fclose('all');
+    disp('WARNING: Data file already exists! Do you want to overwrite it?');
+    condOVER=input('1 = YES, 2 = I WANT TO CHANGE ID, 3 = I WANT TO START WHERE THIS SUBJECT LEFT OFF, 4 = QUIT: ');
+    switch condOVER
+        case 1
+            datafilepointer = fopen(datafilename,'wt');
+            startTrial=1;
+            startQ=1;
+        case 2
+            subid=input('New Subject ID: ');
+            fname=sprintf('MASC_fMRItask_responses_%d',subid);
+            datafilename = strcat('MASC_fMRItask_responses_',num2str(subid),'.txt');
+            datafilepointer = fopen(datafilename,'wt');
+            startTrial=1;startQ=1;
+        case 3
+            load(sprintf('%s',fname));
+            startTrial=Im;
+            startQ=Q;
+        case 4
+            fclose('all');
+            error('Experimenter quit program.');
+    end
+else
+    datafilepointer = fopen(datafilename,'wt'); % open ASCII file for writing
+    startTrial=1;startQ=1;
+end
+
+logdir='/MASC_expr_logs'; % may need to change per site
+sub_dir=filenames(sprintf('%s/%d',logdir,subid));
+
+
+%% screen settings
+% PsychDefaultSetup(2);
+screenNumber = max(Screen('Screens'));
+%colors
+% backgroundColor = 0; %black
+% textColor = 87; %grey
+white = WhiteIndex(screenNumber);
+black = BlackIndex(screenNumber);
+textColor=white;
+
+[window, windowRect] = PsychImaging('OpenWindow', screenNumber, black);
+% Get the size of the on screen window in pixels
+[screenXpixels, screenYpixels] = Screen('WindowSize', window);
+% Get the centre coordinate of the window in pixels
+% [xCenter, yCenter] = RectCenter(windowRect);
+ifi = Screen('GetFlipInterval', window);
+% Set up alpha-blending for smooth (anti-aliased) lines
+Screen('BlendFunction', window, 'GL_SRC_ALPHA', 'GL_ONE_MINUS_SRC_ALPHA');
+%     Screen('TextFont',window, 'Courier New');
+Screen('TextSize',window, 30);
+%     Screen('TextStyle',window, 1+2);
+
+%%% configure
+dspl.screenWidth = windowRect(3);
+dspl.screenHeight = windowRect(4);
+dspl.xcenter = dspl.screenWidth/2;
+dspl.ycenter = dspl.screenHeight/2;
+dspl.oscale(1).width = 964;
+dspl.oscale(1).height = 252;
+dspl.oscale(1).w = Screen('OpenOffscreenWindow',0);
+% paint black
+Screen('FillRect',dspl.oscale(1).w,0); %needed?
+% add scale image
+LiveVASscale = imread('MASC_slider1.png');
+LiveVAStex = Screen('MakeTexture',window,LiveVASscale);
+PostVASscale = imread('MASC_slider2.png');
+PostVAStex = Screen('MakeTexture',window,PostVASscale);
+% Make a base Rect of 200 by 200 pixels
+baseMark = [0 0 20 20];
+vbl = Screen('Flip', window);
+waitframes = 1;
+
+% Keyboard setup
+KbName('UnifyKeyNames');
+
+%% initialize mex func
+KbCheck;
+WaitSecs(0.1);
+GetSecs;
+priorityLevel=MaxPriority(window);
+Priority(priorityLevel);
+
+%% text questions
+Q0='How is this person feeling in this moment?';
+Q1='How easy was it to imagine yourself experiencing this person?s situation while you were watching?';
+Q2='With the mouse, mark on this body map where, if at all, you feel the emotions evoked by this image.';
+% QList=1:2;
+% QStrList={Q1 Q2};
+instruc=sprintf('In this experiment you will see videos of people telling stories. \n \n  Please rate what you think the person telling the story is feeling moment by moment. \n \n Remember to give your rating continuously throughout the video by moving the mouse.');
+endexper='Thank you. Please wait for your experimenter.';
+hitspace='Hit Space Bar to Continue.';
+%% scales
+% S1='Not At All                                             Very Much';
+
+dspl.oscale(1).rect = [...
+    [dspl.xcenter dspl.ycenter]-[0.5*dspl.oscale(1).width 0.5*dspl.oscale(1).height] ...
+    [dspl.xcenter dspl.ycenter]+[0.5*dspl.oscale(1).width 0.5*dspl.oscale(1).height]];
+% shiftdown = ceil(dspl.screenHeight*0);
+% dspl.oscale(1).rect = dspl.oscale(1).rect + [0 shiftdown 0 shiftdown];
+% add title
+% Screen('TextSize',dspl.oscale(1).w,50);
+% DrawFormattedText(dspl.oscale(1).w,...
+%     'OVERALL INTENSITY RATING',...
+%     'center',dspl.ycenter-270,255);
+% determine cursor parameters for all scales
+cursor.xmin = dspl.oscale.rect(1) + 123;
+cursor.width = 700;
+cursor.xmax = cursor.xmin + cursor.width;
+cursor.size = 8;
+cursor.center = cursor.xmin + ceil(cursor.width/2);
+cursor.y = dspl.oscale.rect(4) - 41;
+cursor.labels = cursor.xmin + [10 42 120 249 379];
+
+qtextPos=550;
+qTextSize=80;
+
+%%%%%%%%%%%%%%%%%% TASK %%%%%%%%%%%%%%%%%%
+%% instructions
+try
+    DrawFormattedText(window,instruc,'center','center',textColor,50);
+    Screen('Flip',window)
+    while 1
+        [~,startTime,keyCode] = KbCheck;
+        if keyCode(KbName('space'))==1
+            break
+        end
+    end
+    %% task
+    % randomize q order
+    % static image order
+    
+    %     %rand gen order of ques and store in array ques(i) -- THIS REMOVE
+    %     randQ=randperm(length(QList));
+    %     for x=1:length(QList)
+    %         QOrder(x)=QList(randQ(x));
+    %     end
+    
+    for i=startTrial:length(videoorder)
+        
+        %clear buff
+        %put crosshairs
+        DrawFormattedText(window,hitspace,'center','center',textColor);
+        Screen('Flip',window,0);
+        while 1
+            [~,~,keyCode] = KbCheck;
+            if keyCode(KbName('space'))==1
+                break
+            end
+        end
+        
+        
+        % load movie
+        moviefile = fullfile(pwd,videoorder{i}); % must provide absolute path
+%         async =1;preloadSecs=1;
+        [moviePtr, duration]=Screen('OpenMovie', window, moviefile);
+        % output options: duration, fps, width, height, count (querying this causes delays), aspectRatio
+        % for multiple movies in succession with lowest possible delay load a movie in the background
+        % while another movie is playing via 'async' flag set to 1 (for
+        % play back set to 0)
+        
+        % play movie, no sound
+        rate=1; % 0 == Stop playback, 1 == Normal speed forward, -1 == Normal speed backward
+        loop=0;
+        soundvolume=0; %  0 = Mute sound output, 0.01 - 1.0 Volume in percent
+        [droppedframes] = Screen('PlayMovie', moviePtr, rate, loop, soundvolume);
+        
+        % load live VAS scale
+        Screen('DrawTextures',window,LiveVAStex,[],dspl.oscale(1).rect);
+        
+        % where to start the mouse MAKE RAND
+        cursor.x = cursor.xmin;
+        theX=dspl.xcenter;theY=dspl.ycenter;
+        SetMouse(theX,theY);
+        % centeredMarksc=CenterRectOnPointd(baseMark, cursor.x, cursor.y);
+        Screen('Flip', window, 0, 1);
+        getRating=1;
+        while getRating
+            [x,y,buttons] = GetMouse(window);
+            if buttons(1)
+                getRating=0;
+                break;
+            end
+            cursor.x = x;
+            % check bounds
+            if cursor.x > cursor.xmax
+                cursor.x = cursor.xmax;
+            elseif cursor.x < cursor.xmin
+                cursor.x = cursor.xmin;
+            end
+            
+            centeredMark = CenterRectOnPointd(baseMark, cursor.x, cursor.y);
+            %                     DrawFormattedText(window,qtext,'center',700,textColor,50);
+            DrawFormattedText(window,Q0,'center',qtextPos,textColor,qTextSize);
+            Screen('DrawTextures',window,LiveVAStex,[],dspl.oscale(1).rect);
+            %                     Screen('DrawTextures', window, tex, [], dstRects); %try textures
+            Screen('FillRect', window, [128 128 128], centeredMark);
+            vbl  = Screen('Flip', window, vbl + (waitframes - 0.5) * ifi);
+        end
+        
+        qX=cursor.x;
+        qresp=(cursor.x-cursor.xmin)/7;
+        [r,~]=size(resp_log);
+        resp_log(r+1,:)=[subid, startTime,currImage,0,qX,qresp,vbl];
+        WaitSecs(.25);
+        
+        % close move
+        Screen('CloseMovie', moviePtr);
+        
+        %             If all your movies have exactly the same format and only differ in duration and
+        % content, but not in image size, color depth, encoding format, or fps, then you
+        % can also use an aync setting of 2 and provide the 'moviePtr' handle of an
+        % already opened movie in the 'preloadSecs' parameter. This will queue the movie
+        % 'moviefile' as a successor to the currently playing moviefile in 'moviePtr'.
+        % Queuing movies this way is more efficient than async flag setting 1, although
+        % also more restricted.
+        
+        % end of video questions
+        
+        % Ease
+        % load live VAS scale
+        Screen('DrawTextures',window,PostVAStex,[],dspl.oscale(1).rect);
+        
+        % where to start the mouse MAKE RAND
+        cursor.x = cursor.xmin;
+        theX=dspl.xcenter;theY=dspl.ycenter;
+        SetMouse(theX,theY);
+        % centeredMarksc=CenterRectOnPointd(baseMark, cursor.x, cursor.y);
+        Screen('Flip', window, 0, 1);
+        getRating=1;
+        while getRating
+            [x,y,buttons] = GetMouse(window);
+            if buttons(1)
+                getRating=0;
+                break;
+            end
+            cursor.x = x;
+            % check bounds
+            if cursor.x > cursor.xmax
+                cursor.x = cursor.xmax;
+            elseif cursor.x < cursor.xmin
+                cursor.x = cursor.xmin;
+            end
+            
+            centeredMark = CenterRectOnPointd(baseMark, cursor.x, cursor.y);
+            %                     DrawFormattedText(window,qtext,'center',700,textColor,50);
+            DrawFormattedText(window,Q1,'center',qtextPos,textColor,qTextSize);
+            Screen('DrawTextures',window,PostVAStex,[],dspl.oscale(1).rect);
+            %                     Screen('DrawTextures', window, tex, [], dstRects); %try textures
+            Screen('FillRect', window, [128 128 128], centeredMark);
+            vbl  = Screen('Flip', window, vbl + (waitframes - 0.5) * ifi);
+        end
+        
+        qX=cursor.x;
+        qresp=(cursor.x-cursor.xmin)/7;
+        [r,~]=size(resp_log);
+        resp_log(r+1,:)=[subid, startTime,currImage,2,qX,qresp,vbl]; % Ques=2
+        WaitSecs(.25);
+        
+        % Embodiment
+        
+        %             %load, resize, and place image
+        %             imdata=imread(sprintf('%d%s',videoorder{i},'.jpg')); %load video! update
+        %             tex=Screen('MakeTexture', window, imdata);
+        %             [s1, s2, ~] = size(imdata);aspectRatio = s2 / s1;
+        %             heightScalers = linspace(1, 0.2, 10);
+        %             imageHeights = screenYpixels .* heightScalers;
+        %             imageWidths = imageHeights .* aspectRatio;
+        %             currImage=videoorder(i);
+        %             % Number of images
+        %             %numImages = numel(heightScalers);
+        %             theRect = [0 0 imageWidths(7) imageHeights(7)];
+        %             dstRects=CenterRectOnPointd(theRect, screenXpixels/2, screenYpixels/3.5);
+        
+        % set up bodymap
+        [s1, s2, ~] = size(bmdata);aspectRatio = s2 / s1;
+        heightScalers = linspace(1, 0.2, 10);
+        imageHeights = screenYpixels .* heightScalers;
+        imageWidths = imageHeights .* aspectRatio;
+        bRect = [0 0 imageWidths(5) imageHeights(5)];
+        bmRects=CenterRectOnPointd(bRect, 1100, screenYpixels/3);
+        
+        %display bodymap
+        bmtex=Screen('MakeTexture', window, bmdata);
+        Screen('DrawTextures', window, bmtex, [], bmRects);
+        
+        %mouseaction
+        % Move the cursor to the center of the screen (over image)
+        %             theX = windowRect(RectRight)/2;
+        %             theY = windowRect(RectBottom)/2;
+        theX=1300;theY=300;
+        SetMouse(theX,theY);
+        Screen(window,'DrawText','Click to start. Hit space to finish.',50,50,255);
+        Screen('Flip', window, 0, 1);
+        while (1)
+            [~,~,buttons] = GetMouse(window);
+            if buttons(1)
+                break;
+            end
+        end
+        [theX,theY] = GetMouse(window);
+        thePoints = [theX theY];
+        %             Screen(window,'DrawLine',120,theX,theY,theX,theY,5.5);
+        Screen('DrawLine',window,[63 183 209 81],theX,theY,theX,theY,7); %doesnt change prop
+        Screen('Flip', window, 0, 1);
+        newPt=0;
+        while (1)
+            [~,startTime,keyCode] = KbCheck;
+            if keyCode(KbName('space'))==1
+                break
+            else keepDraw=1;
+            end
+            while keepDraw
+                [x,y,buttons] = GetMouse(window);
+                if ~buttons(1)
+                    newPt=5;
+                    break;
+                else
+                    thePoints = [thePoints ; x y]; %#ok<AGROW>
+                    [numPoints, ~]=size(thePoints);
+                    % Only draw the most recent line segment: This is possible,
+                    % because...
+                    if ~newPt
+                        Screen('DrawLine',window,[63 183 209 81],thePoints(numPoints-1,1),thePoints(numPoints-1,2),thePoints(numPoints,1),thePoints(numPoints,2),7);
+                    else
+                        [theX,theY] = GetMouse(window);
+                        Screen('DrawLine',window,[63 183 209 81],theX,theY,theX,theY,7);
+                        % ...we ask Flip to not clear the framebuffer after flipping:
+                        newPt=0;
+                    end
+                    Screen('Flip', window, 0, 1);
+                    theX = x; theY = y;
+                end
+            end
+        end
+        %save thePoints
+        bmap{i}=thePoints;
+        Screen('Flip', window);
+        
+    end
+    
+    %         save(fname,'surlog','bmap','videoorder','Q','Im');
+    %         Screen('Close', tex);
+    
+catch
+    Screen('CloseAll');
+    fclose('all');
+    Priority(0);
+    psychrethrow(psychlasterror);
+    save(fname,'surlog','bmap','videoorder','Q','Im');
+end
+%%%%%%%%%%%%%%%%%%%%%
+%% END SCREEN
+%%%%%%%%%%%%%%%%%%%%%
+DrawFormattedText(window,endexper,'center','center',textColor);
+Screen('Flip',window)
+while 1
+    [~,~,keyCode] = KbCheck;
+    if keyCode(KbName('space'))==1
+        break
+    end
+end
+
+%%%%%%%%%%%%%%%%%%%%%
+%% CLEAN UP
+%%%%%%%%%%%%%%%%%%%%%
+dat_save=fullfile(sprintf('%s',logdir),sprintf('%s',fname));
+save(dat_save,'surlog','bmap','videoorder');
+Priority(0);
+Screen('CloseAll');
+fclose('all');
+sca;
+
+end
